@@ -1,0 +1,6 @@
+[submodule "backend"]
+	path = backend
+	url = https://github.com/vect-maker/mercanto.git
+[submodule "frontend"]
+	path = frontend
+	url = https://github.com/doomii18/Mercanto_Front-end.git
