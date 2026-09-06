@@ -88,6 +88,21 @@ podman compose up
 
 ```
 
+**6. Descargar el modelo de embeddigns**
+Para la busqueda de imagen se necesita este modelo el cual es CLIP.
+
+```bash
+just download-model
+```
+
+**7. Ingresar las entidades de DEMO (opcional)**
+El servidor ya deberia de estar fucnionando pero para la demo
+se necesita entidades precargadas a en el sistema. 
+
+```bash
+just provision-all
+```
+
 ---
 
 ### Frontend
