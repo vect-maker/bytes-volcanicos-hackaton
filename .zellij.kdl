@@ -1,0 +1,38 @@
+layout {
+    default_tab_template {
+        pane size=1 borderless=true {
+            plugin location="tab-bar"
+        }
+        children
+        pane size=1 borderless=true {
+            plugin location="status-bar"
+        }
+    }
+
+    tab name="frontend" focus=true {
+        pane name="frontend" cwd="frontend"
+    }
+
+    tab name="backend" {
+        pane name="backend" cwd="backend"
+    }
+
+    tab name="monitor" {
+        pane split_direction="horizontal" {
+            pane name="host" size="60%" {
+                command "htop"
+            }
+            pane name="containers" size="40%" {
+                command "podman"
+                args "stats"
+            }
+        }
+    }
+
+    tab name="logs" {
+        pane name="compose-logs" cwd="backend" {
+            command "podman"
+            args "compose" "logs" "-f"
+        }
+    }
+}
