@@ -1,135 +1,129 @@
 # Mercanto
 
-Repositorio global.
-
-### Referencias de Submódulos
-
-* **[Submódulo Backend (`./mercanto-backend`)](https://github.com/vect-maker/mercanto)**:  API central en Rust y workers.
-* **[Submódulo Frontend (`./mercanto-frontend`)](https://github.com/doomii18/Mercanto_Front-end)**:  Cliente SPA en Vue 3 + TypeScript (Vite).
+Plataforma B2B de comercio mayorista diseñada para descentralizar y digitalizar la cadena de suministro en Nicaragua. Conecta a importadores y mayoristas con MIPYMES regionales, eliminando la fricción logística y la asimetría de información en el abastecimiento comercial.
 
 ---
 
-## Contexto del Dominio y Problema a Resolver
+## 📁 Submódulos del Repositorio
 
-**TL;DR:** Mercanto es una plataforma e-commerce B2B orientada a digitalizar y descentralizar el comercio mayorista en Nicaragua. Conecta a importadores/mayoristas de Managua con MIPYMES regionales para eliminar la fricción logística y la asimetría de información en la cadena de suministro.
+El proyecto está organizado como un repositorio paraguas que integra dos subsistemas independientes:
 
-* **Problema:** La alta concentración geográfica de proveedores genera gastos elevados de transporte, ineficiencia temporal y dificultad para auditar precios y calidad por parte de los pequeños comerciantes departamentales.
-* **Solución Arquitectónica:** Plataforma transaccional B2B basada en un modelo de comisión por transacción (2.5%) que centraliza el descubrimiento de proveedores, digitalización de catálogos y logística de envíos.
-* **Casos de Uso Críticos & Edge Cases:**
-  * **Verificación de Entidades (Prevención de Fraude):** Validación estricta mediante RUC e insignias de verificación. Previene la creación de tiendas fantasma.
-  * **Comunicación de Alta Concurrencia:** Chat integrado comprador-distribuidor.
-  * **Búsqueda Inteligente:** Filtros por ubicación, precio, categoría y reputación.
-
-## Arquitectura y Diseño del Sistema
-
-El sistema está diseñado priorizando **escalabilidad horizontal**, **consistencia transaccional** y **aislamiento de dominios**.
-
-* **Aislamiento Multi-Tenant:** Implementación de JSON Web Tokens (JWT) y RBAC para separar criptográficamente a Compradores y Proveedores.
-* **Patrón Transactional Outbox & Event Streaming:** Delega cargas pesadas de I/O (cálculos PostGIS, pgvector, WebSockets para el chat) a workers asíncronos vía NATS JetStream. Esto mitiga los cuellos de botella en el hilo principal de Axum, previniendo bloqueos del event loop durante picos de tráfico.
-* **Diseño Guiado por Dominio (DDD):** Nutype y SQLx previenen estados corruptos en memoria mediante verificación estricta de invariantes en tiempo de compilación.
-
-## Tecnologías Utilizadas
-
-* **Frontend:** Vue 3 (Composition API), TypeScript, Pinia, Vue Router, Zod, Vite, HTML5, CSS3.
-* **API Core:** Rust, Axum, Serde, Utoipa.
-* **Persistencia:** PostgreSQL, PostGIS, pgvector, SQLx, Nutype.
-* **Infraestructura:** Podman, Compose, Caddy, Alpine Linux.
-* **Seguridad:** Argon2 (hashing criptográfico).
-
-## Compatibilidad y Entorno de Ejecución
-
-> **Restricción de Entorno:** Diseño y optimización nativa para **Linux**. Ejecución orquestada obligatoriamente con **Podman + Compose** (rootless daemonless). Gestión de tareas mediante **Justfile**.
-> **Entornos Windows:** Ejecución soportada pero **estrictamente recomendada a través de WSL (Windows Subsystem for Linux)**. Windows nativo carece de las dependencias Bash requeridas para interpretar las recetas de compilación.
-
-* **Requisitos del Host:** Podman, Podman Compose, Just, SQLx CLI, Node.js (v18+ LTS) y npm.
+* 🦀 **[Backend (`./backend`)](backend/README.md)**: API de alto rendimiento en Rust (Axum), arquitectura asíncrona con *Transactional Outbox*, workers de eventos (NATS JetStream), worker de Machine Learning (CLIP / pgvector), persistencia geoespacial (PostGIS) y almacenamiento S3 (RustFS).
+* ⚡ **[Frontend (`./frontend`)](frontend/README.md)**: Cliente SPA desarrollado en Vue 3 (Composition API), Vite, TypeScript, Tailwind CSS, Pinia para gestión de estado, y mapas geoespaciales con Leaflet.
 
 ---
 
-## Instalación y Ejecución (Tutorial de Desarrollo)
+## 🏛️ Arquitectura Global del Sistema
 
-### Backend e Infraestructura
+El ecosistema de Mercanto está diseñado bajo principios de **escalabilidad horizontal**, **consistencia transaccional** y **verificación estricta en tiempo de compilación**:
 
-**1. Variables de Entorno**
-Duplicar `.example.env` y poblar credenciales (PostgreSQL, SMTP, S3) para la inyección de infraestructura del orquestador.
-```bash
-cp .example.env .env
+```mermaid
+flowchart TD
+    subgraph Client ["Cliente"]
+        Frontend["Frontend SPA<br/>Vue 3 + TypeScript + Pinia + Vite"]
+    end
 
+    subgraph Gateway ["Puerta de Enlace"]
+        Caddy["Caddy Reverse Proxy<br/>:8443 TLS / :8080 HTTP"]
+    end
+
+    subgraph CoreServices ["Servicios Principales"]
+        API["Core API (Axum / Rust)<br/>Auth ED25519 & Nutype"]
+        Scalar["Scalar API Docs (:8030)"]
+        RustFS[("RustFS<br/>S3-Compatible Object Storage")]
+    end
+
+    subgraph DataPlane ["Persistencia y Mensajería"]
+        DB[("PostgreSQL 16<br/>PostGIS & pgvector")]
+        NATS{{"NATS JetStream<br/>Event Bus & Stream Engine"}}
+    end
+
+    subgraph Workers ["Workers Asíncronos"]
+        Worker["Transactional Worker<br/>Outbox Consumer & SMTP"]
+        MLWorker["ML Worker<br/>Embeddings CLIP & Búsqueda Visual"]
+    end
+
+    Frontend -->|"HTTPS / WSS (:8443)"| Caddy
+    Caddy -->|"Proxy /api"| API
+    Caddy -->|"Proxy /storage"| RustFS
+    API -.->|"OpenAPI Specs"| Scalar
+
+    API -->|"Transacciones & Outbox"| DB
+    API -->|"Almacenamiento Archivos"| RustFS
+
+    Worker -->|"Consume Outbox Events"| DB
+    Worker -->|"Publica Eventos"| NATS
+    NATS -->|"Suscripción a Eventos"| MLWorker
+    MLWorker -->|"Indexa Vectores"| DB
+    MLWorker -->|"Lee / Escribe Objetos"| RustFS
 ```
 
-**2. Claves Criptográficas**
-Generación de llaves ED25519 para emisión y validación de JWT.
+### Características Clave
+* **Búsqueda Multimodal Inteligente:** Indexación semántica y búsqueda por imágenes utilizando vectores generados por el modelo de ML (CLIP) y almacenados en `pgvector`.
+* **Geolocalización Comercial:** Cálculo de cobertura de entrega, rutas y proximidad de proveedores mediante `PostGIS`.
+* **Transactional Outbox:** Garantía de entrega atómica de eventos en base de datos antes de publicarlos en NATS JetStream, protegiendo la resiliencia del sistema ante caídas.
+* **Seguridad Criptográfica:** Firma de tokens de acceso mediante pares de claves asimétricas ED25519 y hash de contraseñas con Argon2.
 
+---
+
+## 🛠️ Requisitos Previos
+
+* **Sistema Operativo:** Diseñado y optimizado para **Linux** (ej. Fedora, Ubuntu, Arch). En Windows, se recomienda el uso estricto de **WSL2**.
+* **Contenedores:** [Podman](https://podman.io/) y [Podman Compose](https://github.com/containers/podman-compose) (o Docker / Docker Compose).
+* **Gestor de Tareas:** [Just](https://github.com/casey/just) (versión 1.14 o superior).
+* **Entorno Frontend:** [Node.js](https://nodejs.org/) (v18+ LTS) y `npm`.
+* **Multiplexor de Terminal (Opcional):** [Zellij](https://zellij.dev/) para el entorno de desarrollo automatizado.
+
+---
+
+## 🚀 Inicio Rápido (Monorepo)
+
+### 1. Clonar el repositorio con sus submódulos
 ```bash
-just bootstrap-keys
-
+git clone --recurse-submodules https://github.com/vect-maker/bytes-volcanicos-hackaton.git
+cd bytes-volcanicos-hackaton
 ```
 
-**3. Sincronización SQLx (Desarrollo)**
-Validación de metadata SQL contra el esquema activo para seguridad de tipos en compilación.
-
+### 2. Configurar variables de entorno
+Copia las plantillas correspondientes para cada subproyecto:
 ```bash
-just prepare-sqlx
-
+cp backend/.example.env backend/.env
+cp frontend/.env.example frontend/.env
 ```
 
-**4. Compilación de Imágenes OCI (Developer Build)**
-Construcción de binarios Rust y empaquetado de contenedores en **modo debug** orientado al entorno de desarrollo local.
-
+### 3. Inicialización Automática
+Utiliza el `justfile` raíz para preparar dependencias de frontend y generar las llaves criptográficas del backend:
 ```bash
-CONTAINER_ENGINE=podman just build-all-debug
-
+just setup
 ```
 
-**5. Despliegue de Infraestructura**
-Orquestación de topología completa e inicialización de volúmenes (PostgreSQL, NATS, RustFS, API, Workers, Proxy).
-
+### 4. Compilación
+Compila las imágenes de desarrollo del backend y construye los paquetes del frontend:
 ```bash
-podman compose up
-
+just build
 ```
 
-**6. Descargar el modelo de embeddigns**
-Para la busqueda de imagen se necesita este modelo el cual es CLIP.
-
+### 5. Entorno de Desarrollo Integrado
+Inicia la sesión de desarrollo en Zellij, la cual levantará automáticamente pestañas para Frontend, Backend, Monitoreo de recursos (`htop` + `podman stats`) y Logs en vivo:
 ```bash
-just download-model
-```
-
-**7. Ingresar las entidades de DEMO (opcional)**
-El servidor ya deberia de estar fucnionando pero para la demo
-se necesita entidades precargadas a en el sistema. 
-
-```bash
-just provision-all
+just dev
 ```
 
 ---
 
-### Frontend
+## 🧭 Recetas del Gestor de Tareas (`just`)
 
-> **Requisito:** Node.js (LTS) instalado en el host para ejecutar el servidor de desarrollo Vite y gestionar paquetes vía `npm`.
+El `justfile` raíz expone los comandos generales y conecta con los submódulos usando soporte nativo de módulos:
 
-**1. Variables de Entorno**
-Acceder al directorio del submódulo, duplicar el archivo `.example.env` y configurar la URL base del backend:
+| Comando | Descripción |
+| :--- | :--- |
+| `just setup` | Genera claves ED25519 en backend e instala dependencias `npm` en frontend. |
+| `just build` | Compila las imágenes OCI de depuración del backend y compila el frontend. |
+| `just check` | Ejecuta el análisis de tipos estáticos (`vue-tsc`) en el frontend. |
+| `just dev` | Lanza el entorno de desarrollo multiventana en Zellij. |
+| `just backend <receta>` | Ejecuta directamente cualquier receta del backend (ej. `just backend download-model`). |
+| `just frontend <receta>` | Ejecuta directamente cualquier receta del frontend (ej. `just frontend dev`). |
 
-```bash
-cd mercanto-frontend
-cp .example.env .env
-
-```
-
-**2. Instalación de Dependencias**
-Instalar los paquetes del proyecto vía npm:
-
-```bash
-npm install
-
-```
-
-**3. Ejecución del Servidor de Desarrollo**
-Iniciar el servidor local con HMR (Hot Module Replacement):
-
-```bash
-npm run dev
-
-```
+Para explorar la documentación detallada de cada subsistema:
+- Consulta la [Documentación del Backend](backend/README.md).
+- Consulta la [Documentación del Frontend](frontend/README.md).
