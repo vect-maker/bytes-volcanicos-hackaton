@@ -19,8 +19,8 @@ setup:
 build:
     @echo "==> Building backend (debug images)..."
     just backend::build-all-debug
-    @echo "==> Building frontend..."
-    just frontend::build
+    @echo "==> Building frontend image..."
+    just frontend::build-image
 
 # Run type checks and validations across the stack
 check:
