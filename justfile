@@ -12,6 +12,8 @@ default:
 setup:
     @echo "==> Bootstrapping backend keys..."
     just backend::bootstrap-keys
+    @echo "==> Downloading ML model (CLIP)..."
+    just backend::download-model
     @echo "==> Installing frontend dependencies..."
     just frontend::install
 
