@@ -32,3 +32,9 @@ check:
 # Open development environment in Zellij
 dev:
     zellij --layout .zellij.kdl
+
+# Launch ChartDB database visualizer via Podman (http://localhost:8085)
+chartdb port="8085":
+    @echo "==> Launching ChartDB at http://localhost:{{port}}..."
+    podman run --rm -it -p {{port}}:80 --name chartdb ghcr.io/chartdb/chartdb:latest
+

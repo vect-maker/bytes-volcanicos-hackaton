@@ -205,6 +205,85 @@ La arquitectura separa estrictamente los servicios expuestos a la máquina anfit
 
 ---
 
+## ☁️ Despliegue en la Nube (Microsoft Azure)
+
+La plataforma Mercanto se encuentra completamente desplegada y en funcionamiento en la nube de **Microsoft Azure**, alojando en una única máquina virtual dedicada **absolutamente todos** los componentes y servicios del ecosistema de producción, logrando una arquitectura 100% autónoma, autocontenida y libre de dependencias de servicios administrados externos de terceros (sin RDS externo, sin AWS S3 y sin Synadia NATS).
+
+### 🖥️ Especificaciones de la Máquina Virtual (Azure VM)
+
+| Parámetro | Detalle de Infraestructura |
+| :--- | :--- |
+| **Tamaño de Instancia** | **Standard B2as v2** (2 vCPUs, 8 GiB memoria RAM) |
+| **Sistema Operativo** | **Linux (Ubuntu 24.04 LTS)** |
+| **Región de Azure** | **North Central US** (`northcentralus`) |
+| **Nombre DNS / FQDN** | `mercanto-bytes.northcentralus.cloudapp.azure.com` *(Azure Free DNS)* |
+| **Dirección IP Pública** | `135.232.223.172` |
+| **Dirección IP Privada** | `172.16.0.4` |
+| **Red Virtual / Subnet** | `vnet-northcentralus-1` / `snet-northcentralus-1` |
+| **Interfaz de Red** | `bytes-mercanto872` |
+| **Grupo de Seguridad** | `bytes-mercanto-nsg` |
+
+### 📦 Componentes Alojados en la VM (Ecosistema 100% Autónomo)
+
+Todos los servicios y subsistemas de Mercanto se orquestan localmente en la máquina virtual mediante contenedores OCI (`compose.prod.yml`):
+
+| Componente | Contenedor / Imagen | Tecnología | Rol en Producción |
+| :--- | :--- | :--- | :--- |
+| 🌐 **Frontend SPA** | `docker.io/haterofvectors/mercanto-client:prod` | Vue 3 + Vite + Tailwind + Nginx | Aplicación web interactiva para compradores, transportistas y cooperativas (servida en `/`) |
+| 🦀 **Core API Backend** | `docker.io/haterofvectors/mercanto-server:prod` | Rust + Axum | Servidor HTTP RESTful, autenticación Ed25519, OpenAPI y SSE para eventos en tiempo real (servido en `/api`) |
+| ⚙️ **Worker Transaccional** | `docker.io/haterofvectors/mercanto-worker:prod` | Rust | Procesamiento asíncrono en background, consumo de eventos de negocio y despacho de notificaciones |
+| 🧠 **ML Worker (Visión e IA)** | `docker.io/haterofvectors/mercanto-ml-worker:prod` | Rust + Candle (CLIP ViT-B/32) | Inferencia de embeddings multimodales (texto/imagen) en CPU local para búsqueda semántica |
+| 🐘 **Base de Datos** | `docker.io/garapadev/postgres-postgis-pgvector:16-stable` | PostgreSQL 16 | Almacenamiento relacional con extensiones `pgvector` (512 dims), `PostGIS` (geolocalización) y `pg_trgm` |
+| 📨 **Bus de Eventos (Pub/Sub)** | `docker.io/library/nats:2.12.11-alpine3.22` | NATS JetStream | Broker de mensajería con persistencia en disco (`nats_data`) para desacoplamiento y colas de trabajo |
+| 🪣 **Object Storage (S3)** | `docker.io/rustfs/rustfs:latest` | RustFS | Almacenamiento de objetos S3 local de alto rendimiento para fotos de productos, avatares y documentos |
+| 📖 **Documentación API** | `scalarapi/api-reference:latest` | Scalar UI | Portal interactivo de documentación para todas las especificaciones OpenAPI/Swagger |
+| 🛡️ **Reverse Proxy & TLS** | `docker.io/library/caddy:2.8-alpine` | Caddy 2 | Reverse proxy perimetral con TLS automático (Let's Encrypt / ZeroSSL), enrutador de tráfico y proxy S3 |
+| 🛠️ **Provisioner (CLI)** | `docker.io/haterofvectors/mercanto-provisioner:prod` | Rust CLI | Herramienta de aprovisionamiento para seeding de datos sintéticos y creación de buckets |
+
+### 🛡️ Reglas de Seguridad y Puertos Expuestos (Azure NSG)
+
+La exposición de puertos hacia internet está estrictamente controlada mediante el Grupo de Seguridad de Red (**Network Security Group: `bytes-mercanto-nsg`**). Solo se permiten conexiones a los servicios perimetrales esenciales; la base de datos, el bus de eventos NATS y la API interna se mantienen aislados en la red interna de contenedores:
+
+| Prioridad | Nombre de Regla | Puerto | Protocolo | Origen / Destino | Acción | Rol / Servicio Asociado |
+| :---: | :--- | :---: | :---: | :---: | :---: | :--- |
+| **300** | `SSH` | `22` | TCP | Any / Any | ✅ Allow | Acceso administrativo remoto seguro a la máquina virtual |
+| **310** | `http` | `80` | TCP | Any / Any | ✅ Allow | Caddy Reverse Proxy (redirección automática HTTP ➔ HTTPS) |
+| **320** | `https` | `443` | TCP | Any / Any | ✅ Allow | Caddy Reverse Proxy TLS: sirve la aplicación **Frontend SPA** en `/` y la **Core API** en `/api/*` |
+| **330** | `rustfs` | `9000` | Any (TCP) | Any / Any | ✅ Allow | Proxy Caddy hacia **RustFS S3 Gateway** (Object Storage con cabeceras CORS) |
+
+![Reglas Inbound en Azure NSG](backend/docs/images/azure-nsg-rules.png)
+
+### Configuración del Entorno y Aprovisionamiento en la VM
+
+1. **Gestor de Contenedores y Orquestación:**
+   - **Podman + Docker Compose:** La VM utiliza Podman en modo rootless junto al plugin oficial `/usr/local/bin/docker-compose` para el despliegue del stack `compose.prod.yml`.
+   - **Just:** Instalado como runner de comandos para ejecutar migraciones (`just backend migrate`), seeding (`just backend provision-all`) y despliegue continuo (`just backend deploy-prod`).
+
+2. **Instalación de `sqlx-cli` para Gestión de Migraciones:**
+   - Se requirió e instaló la herramienta CLI oficial **`sqlx-cli` (v^0.9)** directamente en el host de la máquina virtual (mediante `cargo install sqlx-cli --no-default-features --features rustls,postgres` o `just install-sqlx-cli`).
+   - **Propósito:** Ejecutar las migraciones estructuradas en `backend/migrations/` de manera versionada, atómica y segura contra PostgreSQL mediante `just backend migrate`. Esto reemplaza esquemas frágiles de scripts en `/docker-entrypoint-initdb.d/` y garantiza la inicialización correcta de extensiones (`vector`, `postgis`, `pg_trgm`), esquemas de seguridad y tablas.
+
+3. **Memoria de Intercambio (Swap de 4 GB):**
+   - Se configuró una partición/archivo de intercambio Swap de 4 GB (`/swapfile`) persistido en `/etc/fstab`.
+   - **Propósito:** Proporcionar margen de memoria suficiente para descargar los artefactos del modelo y soportar la inferencia en RAM del modelo de visión multimodal **CLIP (ViT-B/32)** (`clip.safetensors`, ~350 MB en disco) y la indexación de similitud vectorial en **pgvector** sin riesgo de que los procesos sean interrumpidos por el OOM Killer del kernel.
+
+4. **Arquitectura de Enrutamiento Inverso (Caddy):**
+   - **Gestión Automática de TLS:** Caddy obtiene y renueva certificados HTTPS válidos para `mercanto-bytes.northcentralus.cloudapp.azure.com`.
+   - **Enrutamiento Unificado:**
+     - `https://mercanto-bytes.northcentralus.cloudapp.azure.com/` ➔ Servido por el contenedor **Frontend SPA** (`mercanto-client:prod` en Nginx).
+     - `https://mercanto-bytes.northcentralus.cloudapp.azure.com/api/*` ➔ Reenviado al **Backend Axum** (`mercanto-server:prod`), removiendo el prefijo `/api`.
+     - `https://mercanto-bytes.northcentralus.cloudapp.azure.com/notifications*` ➔ Canal persistente de eventos SSE para notificaciones en vivo.
+     - `https://mercanto-bytes.northcentralus.cloudapp.azure.com:9000` ➔ Proxy S3 con cabeceras CORS para subida directa de imágenes y documentos a RustFS.
+
+### 🌐 Puntos de Acceso Públicos en Producción
+
+* 🌐 **Plataforma Web (Frontend):** [https://mercanto-bytes.northcentralus.cloudapp.azure.com](https://mercanto-bytes.northcentralus.cloudapp.azure.com)
+* 🦀 **API REST Backend:** [https://mercanto-bytes.northcentralus.cloudapp.azure.com/api](https://mercanto-bytes.northcentralus.cloudapp.azure.com/api)
+* 🪣 **Almacenamiento S3 (RustFS):** [https://mercanto-bytes.northcentralus.cloudapp.azure.com:9000](https://mercanto-bytes.northcentralus.cloudapp.azure.com:9000)
+* 🩺 **Health Check:** [https://mercanto-bytes.northcentralus.cloudapp.azure.com/health](https://mercanto-bytes.northcentralus.cloudapp.azure.com/health)
+
+---
+
 ## 🧭 Catálogo de Recetas `just`
 
 El `justfile` raíz centraliza las operaciones del monorepo mediante el soporte de módulos:
